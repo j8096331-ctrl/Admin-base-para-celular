@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Corregir corte · RG Ópticas</title>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+<style>
+:root{--navy:#0A192F;--gold:#D4AF37;--bg:#F4F1EA;--line:#E2DDD0;--mute:#64748B;--ok:#047857;--bad:#B91C1C}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,'Segoe UI',sans-serif;background:var(--bg);color:#0F172A;padding:24px 16px 60px}
+.caja{max-width:620px;margin:0 auto}
+h1{font-size:1.6rem;color:var(--navy)}h1 small{display:block;font-size:.75rem;letter-spacing:3px;color:var(--gold);text-transform:uppercase;margin-bottom:4px}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;margin-top:16px}
+label{display:block;font-size:.8rem;font-weight:700;color:var(--mute);margin:12px 0 6px}
+input{width:100%;padding:13px;border:1.5px solid var(--line);border-radius:10px;font-size:1rem}
+button{font:inherit;cursor:pointer;border:0;border-radius:10px}
+.pri{width:100%;margin-top:16px;padding:14px;background:var(--navy);color:var(--gold);font-weight:700;font-size:1rem}
+.total{background:var(--navy);color:#fff;border-radius:16px;padding:20px;margin-top:16px}
+.total small{color:var(--gold);font-size:.75rem;letter-spacing:2px;text-transform:uppercase}.total b{display:block;font-size:2.2rem;margin-top:4px}
+.met{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}.met span{background:rgba(255,255,255,.1);border-radius:20px;padding:6px 12px;font-size:.82rem}
+.fila{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}
+.fila b{display:block}.fila small{color:var(--mute);font-size:.82rem}
+.monto{text-align:right;font-weight:800;white-space:nowrap}.monto small{display:block;font-weight:600}
+.borrar{background:#FEF2F2;color:var(--bad);border:1px solid #FECACA;padding:8px 12px;font-weight:700;font-size:.85rem;margin-top:6px}
+.err{color:var(--bad);font-weight:600;margin-top:10px}.vacio{color:var(--mute);text-align:center;padding:30px 0}
+.top{display:flex;justify-content:space-between;align-items:flex-end}.salir{background:none;color:var(--mute);text-decoration:underline;font-size:.85rem}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:12px 18px;border-radius:12px;display:none;font-weight:600}
+</style>
+</head>
+<body>
+<div class="caja">
+  <div class="top"><h1><small>RG Ópticas · Administrador</small>Corregir corte de caja</h1><button class="salir" id="salir" hidden onclick="firebase.auth().signOut()">Cerrar sesión</button></div>
+
+  <div class="card" id="login" hidden>
+    <p style="color:var(--mute)">Entra con tu cuenta de <b>administrador</b> (la única que puede borrar pagos).</p>
+    <label>Correo</label><input id="correo" type="email" autocomplete="username">
+    <label>Contraseña</label><input id="clave" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')entrar()">
+    <button class="pri" onclick="entrar()">Entrar</button>
+    <p class="err" id="errLogin"></p>
+  </div>
+
+  <div id="panel" hidden>
+    <div class="total"><small>Total de la jornada</small><b id="total">$0.00</b><div class="met" id="metodos"></div></div>
+    <div class="card"><b>Pagos de hoy</b><p style="color:var(--mute);font-size:.85rem;margin-top:4px">Toca "Borrar" en el pago registrado por error. El corte se corrige al instante en la óptica.</p><div id="lista"></div></div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+firebase.initializeApp({apiKey:"AIzaSyBgTC6qeXBlnS_mQTVkZ19ueKgZIOrgRnk",authDomain:"optica-rg--2.firebaseapp.com",projectId:"optica-rg--2",storageBucket:"optica-rg--2.firebasestorage.app",messagingSenderId:"786320956490",appId:"1:786320956490:web:77c39f0585c31de77b1ab3"});
+const db=firebase.firestore(), ref=db.collection('config').doc('ventasDiarias');
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const limpio=h=>String(h??'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+const money=n=>'$'+(Number(n)||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+const r2=n=>Math.round((Number(n)+Number.EPSILON)*100)/100;
+let ventas=[], dejarDeEscuchar=null;
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',3500)}
+
+function entrar(){
+  $('errLogin').textContent='';
+  firebase.auth().signInWithEmailAndPassword($('correo').value.trim().toLowerCase(),$('clave').value)
+    .catch(e=>$('errLogin').textContent=({'auth/invalid-credential':'Correo o contraseña incorrectos.','auth/too-many-requests':'Demasiados intentos, espera unos minutos.','auth/network-request-failed':'Sin conexión a internet.'}[e.code]||('Error: '+e.code)));
+}
+firebase.auth().onAuthStateChanged(u=>{
+  $('login').hidden=!!u; $('panel').hidden=!u; $('salir').hidden=!u;
+  if(dejarDeEscuchar){dejarDeEscuchar();dejarDeEscuchar=null}
+  if(u) dejarDeEscuchar=ref.onSnapshot(d=>{ventas=(d.exists&&d.data().lista)||[];pintar()},e=>toast('No se pudo leer la caja: '+e.message));
+});
+
+function pintar(){
+  const total=ventas.reduce((s,v)=>s+(Number(v.monto)||0),0), m=k=>ventas.filter(v=>(v.metodo||'Efectivo')===k).reduce((s,v)=>s+(Number(v.monto)||0),0);
+  $('total').textContent=money(total);
+  $('metodos').innerHTML=`<span>💵 ${money(m('Efectivo'))}</span><span>💳 ${money(m('Tarjeta'))}</span><span>🏦 ${money(m('Transferencia'))}</span><span>${ventas.length} pagos</span>`;
+  $('lista').innerHTML=ventas.length?ventas.map((v,i)=>({v,i})).reverse().map(({v,i})=>`<div class="fila"><div><b>${esc(v.paciente||'Mostrador')}</b><small>${esc(v.hora||'')} · ${esc(limpio(v.concepto))}${v.folioNota?' · '+esc(v.folioNota):''}</small></div>
+    <div class="monto">${money(v.monto)}<small>${esc(v.metodo||'Efectivo')}</small><button class="borrar" onclick="borrar(${i})">Borrar</button></div></div>`).join(''):'<p class="vacio">No hay pagos registrados en la jornada.</p>';
+}
+
+async function borrar(i){
+  const v=ventas[i]; if(!v)return;
+  let trabajo=null;
+  if(/abono|liquida/i.test(v.concepto||'')&&v.folioNota){
+    try{const sn=await db.collection('trabajos').where('folio','==',v.folioNota).limit(1).get();if(!sn.empty)trabajo={id:sn.docs[0].id,...sn.docs[0].data()}}catch(e){}
+  }
+  if(!confirm(`¿Borrar el pago de ${money(v.monto)} de ${v.paciente||'Mostrador'} (${v.hora||''})?`))return;
+  const regresar=trabajo&&confirm(`Este pago era un abono del trabajo ${trabajo.folio} (${trabajo.cliente}).\n\n¿Regresar ${money(v.monto)} a su saldo pendiente?\n\nAceptar = sí · Cancelar = no`);
+  const objetivo=JSON.stringify(v);
+  try{
+    await ref.update({lista:firebase.firestore.FieldValue.arrayRemove(v)});   // solo escribe: no gasta lecturas ni pisa ventas nuevas
+    if(regresar){const saldo=r2((trabajo.saldo||0)+Number(v.monto)),anticipo=r2(Math.max(0,(trabajo.anticipo||0)-Number(v.monto)));
+      await db.collection('trabajos').doc(trabajo.id).update({saldo,anticipo,estado:'PENDIENTE'})}
+    db.collection('auditoria').add({accion:'ELIMINAR_PAGO',detalle:JSON.parse(JSON.stringify(v)),fecha:new Date().toISOString(),origen:'corte-admin.html'}).catch(()=>{});
+    toast('Pago borrado ✓'+(regresar?' · saldo regresado al trabajo':''));
+  }catch(e){toast(/permission/i.test(e.code||e.message)?'Tu cuenta no tiene permiso. Entra con la cuenta de administrador.':/quota|exhausted|429/i.test(e.message)?'Se acabaron las lecturas de hoy. Intenta después de la 1:00 a.m.':'No se pudo: '+e.message)}
+}
+</script>
+</body>
+</html>
